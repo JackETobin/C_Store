@@ -71,6 +71,7 @@ uint32 __namelen(const char* name)
 	return nameLen;
 }
 
+
 uint8 __lenComp(const char* pName, const char* pKeyName)
 {
 	uint8 diff = 0;
@@ -85,6 +86,7 @@ uint8 __lenComp(const char* pName, const char* pKeyName)
 	return diff;
 }
 
+
 uint32 __filenamestart(const char* path)
 {
 	char c = 'a';
@@ -97,7 +99,6 @@ uint32 __filenamestart(const char* path)
 
 	return pathLen;
 }
-
 
 
 uint8 __detectsimilar(char* pName, char* pKeyName)
@@ -120,6 +121,7 @@ uint8 __detectsimilar(char* pName, char* pKeyName)
 	return similar;
 }
 
+
 void __printsimilar(errpack* pErrorPackage)
 {
 	uint8 similarCount = 0;
@@ -140,6 +142,7 @@ void __printsimilar(errpack* pErrorPackage)
 	}
 }
 
+
 void __printkeys(errpack* pErrorPackage)
 {
 	if (!pErrorPackage->pKeyring)
@@ -159,6 +162,7 @@ void __printkeys(errpack* pErrorPackage)
 		printf("%i:\t\"%s\"\n", i, keyName);
 	}
 }
+
 
 void __error__callback(errpack errorPackage)
 {
