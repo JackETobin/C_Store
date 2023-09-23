@@ -11,23 +11,24 @@
 #define MAX_NAME_LENGTH 24
 #define REFRESH_ATTEMPT_MAX 3
 
-typedef		char				int8;
+typedef		char			int8;
 typedef		unsigned char		uint8;
-typedef		short				int16;
+typedef		short			int16;
 typedef		unsigned short		uint16;
-typedef		int					int32;
+typedef		int			int32;
 typedef		unsigned int		uint32;
-typedef		long long			int64;
-typedef		unsigned long long	uint64; 
+typedef		long long		int64;
+typedef		unsigned long long	uint64;
+
 #define UINT64_NUM_DIGITS 20
 
-#define INT8_SIZE sizeof(uint8)
-#define LONG_SIZE sizeof(long)
-#define INT16_SIZE sizeof(uint16)
-#define INT32_SIZE sizeof(uint32)
-#define INT64_SIZE sizeof(uint64)
-#define LDOUB_SIZE sizeof(long double)
-#define POINTER_SIZE sizeof(void*)
+#define INT8_SIZE 	sizeof(uint8)
+#define LONG_SIZE 	sizeof(long)
+#define INT16_SIZE 	sizeof(uint16)
+#define INT32_SIZE 	sizeof(uint32)
+#define INT64_SIZE 	sizeof(uint64)
+#define LDOUB_SIZE 	sizeof(long double)
+#define POINTER_SIZE 	sizeof(void*)
 
 typedef enum _error_code
 {
@@ -146,6 +147,7 @@ typedef struct _stash
 	uint8		isFull;
 }stash, *stash_handle;
 
+extern uint32 unresolvedCollisions;
 extern void (*pCallbackFunc)(errpack errorPackage);
 void __InitErrorCallback(void (*pErrFunc)(errpack errorPackage), uint32 line, const char* file);
 void __ErrorCatch(ret_code code, uint32 line, const char* file, void* optional);
@@ -158,32 +160,32 @@ ret_code __MemRequest(char* name, data_type type, void* container, uint64 sizeIt
 
 
 #define _get_type(container) _Generic((container),						\
-		char: T_CHAR,				unsigned char: T_UCHAR,				\
-		short: T_SHORT,				unsigned short: T_USHORT,			\
-		int: T_INT,					unsigned int: T_UINT,				\
-		long: T_LONG,				unsigned long: T_ULONG,				\
-		long long: T_LONGLONG,		unsigned long long: T_ULONGLONG,	\
-		float: T_FLOAT,				double: T_DOUBLE,					\
-		long double: T_LONGDOUBLE,										\
-																		\
-		char*: T_PCHAR,				unsigned char*: T_PUCHAR,			\
-		short*: T_PSHORT,			unsigned short*: T_PUSHORT,			\
-		int*: T_PINT,				unsigned int*: T_PUINT,				\
-		long*: T_PLONG,				unsigned long*: T_PULONG,			\
-		long long*: T_PLONGLONG,	unsigned long long*:T_PULONGLONG,	\
-		float*: T_PFLOAT,			double*: T_PDOUBLE,					\
-		long double*:T_PLONGDOUBLE,										\
-																		\
-		char**: T_PPCHAR,			unsigned char**: T_PPUCHAR,			\
+		char: T_CHAR,				unsigned char: T_UCHAR,			\
+		short: T_SHORT,				unsigned short: T_USHORT,		\
+		int: T_INT,				unsigned int: T_UINT,			\
+		long: T_LONG,				unsigned long: T_ULONG,			\
+		long long: T_LONGLONG,			unsigned long long: T_ULONGLONG,	\
+		float: T_FLOAT,				double: T_DOUBLE,			\
+		long double: T_LONGDOUBLE,							\
+												\
+		char*: T_PCHAR,				unsigned char*: T_PUCHAR,		\
+		short*: T_PSHORT,			unsigned short*: T_PUSHORT,		\
+		int*: T_PINT,				unsigned int*: T_PUINT,			\
+		long*: T_PLONG,				unsigned long*: T_PULONG,		\
+		long long*: T_PLONGLONG,		unsigned long long*:T_PULONGLONG,	\
+		float*: T_PFLOAT,			double*: T_PDOUBLE,			\
+		long double*:T_PLONGDOUBLE,							\
+												\
+		char**: T_PPCHAR,			unsigned char**: T_PPUCHAR,		\
 		short**: T_PPSHORT,			unsigned short**: T_PPUSHORT,		\
-		int**: T_PPINT,				unsigned int**: T_PPUINT,			\
-		long**: T_PPLONG,			unsigned long**: T_PPULONG,			\
-		long long**: T_PPLONGLONG,	unsigned long long**:T_PPULONGLONG,	\
-		float**: T_PPFLOAT,			double**: T_PPDOUBLE,				\
-		long double**:T_PPLONGDOUBLE,									\
-																		\
-		void*: T_PVOID,				void**: T_PPVOID,					\
-		default: T_UNKNOWN												)
+		int**: T_PPINT,				unsigned int**: T_PPUINT,		\
+		long**: T_PPLONG,			unsigned long**: T_PPULONG,		\
+		long long**: T_PPLONGLONG,		unsigned long long**:T_PPULONGLONG,	\
+		float**: T_PPFLOAT,			double**: T_PPDOUBLE,			\
+		long double**:T_PPLONGDOUBLE,							\
+												\
+		void*: T_PVOID,				void**: T_PPVOID,			\
+		default: T_UNKNOWN								)
 #define _format_request(name, container, reserveSize, reqAction) __MemRequest(name, _get_type(container), &container, sizeof(container), reserveSize, reqAction)
 
 
@@ -193,41 +195,32 @@ ret_code __MemRequest(char* name, data_type type, void* container, uint64 sizeIt
 #define SetMemAllContained()						errcatch(__SetMemContained(), "MEM_SWITCH")
 
 
-#define MakeStash(sizeMB)							errcatch(__Stash__Action(sizeMB, REQ_MAKE), NULL)
+#define MakeStash(sizeMB)						errcatch(__Stash__Action(sizeMB, REQ_MAKE), NULL)
 
 
-#define DestroyStash()								errcatch(__Stash__Action(0, REQ_DESTROY), NULL)
+#define DestroyStash()							errcatch(__Stash__Action(0, REQ_DESTROY), NULL)
 
 
-#define Store(name, input)							errcatch(_format_request(name, input, 0, REQ_STORE), name)
+#define Store(name, input)						errcatch(_format_request(name, input, 0, REQ_STORE), name)
 
 
-#define Reserve(name, reserveSize, pReserved)		errcatch(_format_request(name, pReserved, reserveSize, REQ_RESERVE), name)
+#define Reserve(name, reserveSize, pReserved)				errcatch(_format_request(name, pReserved, reserveSize, REQ_RESERVE), name)
 
 
-#define Fill(name, pInput)							errcatch(_format_request(name, pInput, 0, REQ_FILL), name)
+#define Fill(name, pInput)						errcatch(_format_request(name, pInput, 0, REQ_FILL), name)
 
 
-#define Get(name, output)							errcatch(_format_request(name, output, 0, REQ_GET), name)
+#define Get(name, output)						errcatch(_format_request(name, output, 0, REQ_GET), name)
 
 
-#define Remove(name)								errcatch(__MemRequest(name, 0, NULL, 0, 0, REQ_REMOVE), name)
+#define Remove(name)							errcatch(__MemRequest(name, 0, NULL, 0, 0, REQ_REMOVE), name)
 
 
-#define Condense()									errcatch(__MemRequest(NULL, 0, NULL, 0, 0, REQ_CONDENSE))
+#define Condense()							errcatch(__MemRequest(NULL, 0, NULL, 0, 0, REQ_CONDENSE))
 
 
-#define PrintKeys()									__PrintKeys(__LINE__, __FILE__)
+#define PrintKeys()							__PrintKeys(__LINE__, __FILE__)
 
 
 uint32 NumKeys();
-
-
-
-
-
-ret_code INDEX_SEED(char* pName, uint64* pIndex);
-ret_code INDEX_REDUCE(char* pName, uint64 indexSeed, uint64* pIndexSeed, action reqType);
-ret_code INDEX_REBUILD(char* pName, uint64 indexSeed, uint64* pNewIndex, uint8 iteration, action reqType);
-extern uint32 unresolvedCollisions;
 #endif
