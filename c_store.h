@@ -213,10 +213,10 @@ ret_code __MemRequest(char* name, data_type type, void* container, uint64 sizeIt
 #define Get(name, output)						errcatch(_format_request(name, output, 0, REQ_GET), name)
 
 
-#define Remove(name)							errcatch(__MemRequest(name, 0, NULL, 0, 0, REQ_REMOVE), name)
+//#define Remove(name)							errcatch(__MemRequest(name, 0, NULL, 0, 0, REQ_REMOVE), name)
 
 
-#define Condense()							errcatch(__MemRequest(NULL, 0, NULL, 0, 0, REQ_CONDENSE))
+//#define Condense()							errcatch(__MemRequest(NULL, 0, NULL, 0, 0, REQ_CONDENSE))
 
 
 #define PrintKeys()							__PrintKeys(__LINE__, __FILE__)
