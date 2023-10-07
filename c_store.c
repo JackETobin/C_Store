@@ -2,6 +2,7 @@
 
 static uint32 unresolvedCollisions = 0;
 
+static uint32 globalNumKeyRef;
 static keyring_handle activeKeyring;
 static void (*pCallbackFunc)(errpack errorPackage);
 
@@ -39,7 +40,7 @@ ret_code __SetMemContained(void)
 }
 
 
-uint32 __NameLen(const char* name)
+static inline uint32 __NameLen(const char* name)
 {
 	uint32 nameLen = 0;
 	while (*(name + nameLen) != '\0')
@@ -48,41 +49,21 @@ uint32 __NameLen(const char* name)
 }
 
 
-uint64 __NameSum(char* pName)
+static inline ret_code __NameCheck(char* pName, char* pKeyName)
 {
-	uint64 retSum = 0;
-	while (*(pName) != '\0')
-		retSum += *(pName++);
-	return retSum;
+	uint8 i = 0;
+	ret_code retCode = RET_DUPLICATE_NAME_FND;
+	retCode += (!*pName || !*pKeyName) * (RET_NAMEMSSING_FAILURE - retCode);
+
+	do
+		retCode += (*(pName + i) != *(pKeyName + i)) * (RET_NAMEMSSING_FAILURE - retCode);
+	while (*(pName + i++) != '\0' && retCode == RET_DUPLICATE_NAME_FND);
+
+	return retCode;
 }
 
 
-uint64 __ChunkProd(char* pName)
-{
-	uint64 retProd = 1;
-	while (*(pName) != '\0')
-		retProd *= *(pName++);
-	return retProd;
-}
-
-
-inline ret_code __DuplicateCheck(char* pName, char* pKeyName)
-{
-	if(!*pName || !*pKeyName)
-		return RET_NAMEMSSING_FAILURE;
-	
-	if (__NameLen(pName) != __NameLen(pKeyName))
-		return RET_NAMEMSSING_FAILURE;
-
-	for (uint8 i = 0; *(pName + i) != '\0'; i++)
-		if (*(pName + i) != *(pKeyName + i))
-			return RET_NAMEMSSING_FAILURE;
-
-	return RET_DUPLICATE_NAME_FND;
-}
-
-
-uint64 __Pow(uint32 input, uint32 pow)
+static inline uint64 __Pow(uint32 input, uint32 pow)
 {
 	uint64 output = 1;
 	for (uint32 i = 0; i < pow; i++)
@@ -91,7 +72,7 @@ uint64 __Pow(uint32 input, uint32 pow)
 }
 
 
-uint8 __NumDigits(uint64 input)
+uint8 static inline __NumDigits(uint64 input)
 {
 	uint8 numDigits = 0;
 	while (input)
@@ -103,7 +84,7 @@ uint8 __NumDigits(uint64 input)
 }
 
 
-uint32 NumKeys()
+uint32 NumKeys()		//REMINDER: CANNOT INLINE EXTERNALLY CALLED FUNCTION, DON'T DO IT!!
 {
 	if (!activeKeyring)
 		return RET_KYRNGMSSNG_FAILURE;
@@ -114,20 +95,13 @@ uint32 NumKeys()
 }
 
 
-ret_code INDEX_REDUCE(char* pName, uint64 indexSeed, uint64* pIndex, action reqType)
+static ret_code INDEX_REDUCE(uint64 indexSeed, uint64* pIndex)
 {
-	data_type duplicateCheck;
 	uint32 index = indexSeed;
 	uint8 numDigits = __NumDigits(indexSeed);
-	uint32 numKeys = NumKeys();
+	uint32 numKeys = globalNumKeyRef;
 	while (index > numKeys || ((activeKeyring->keys + index)->data && numDigits >= 2))
 	{
-		if (index < numKeys && (activeKeyring->keys + index)->data)
-			if (__DuplicateCheck(pName, ((key*)activeKeyring->keys + index)->name) == RET_DUPLICATE_NAME_FND)
-			{
-				*pIndex = index;
-				return RET_DUPLICATE_NAME_FND;
-			}
 		index = (numDigits > 2) * (index % __Pow(10, numDigits - 1)) / 10;
 		numDigits -= 2;
 	}
@@ -136,7 +110,7 @@ ret_code INDEX_REDUCE(char* pName, uint64 indexSeed, uint64* pIndex, action reqT
 }
 
 
-ret_code INDEX_REBUILD(char* pName, uint64 indexSeed, uint64* pNewIndex, uint8 iteration, action reqType)
+static ret_code INDEX_REBUILD(uint64 indexSeed, uint64* pNewIndex, uint8 iteration)
 {
 	if (iteration < REFRESH_ATTEMPT_MAX)
 	{
@@ -145,9 +119,9 @@ ret_code INDEX_REBUILD(char* pName, uint64 indexSeed, uint64* pNewIndex, uint8 i
 		uint64 newIndex = 0;
 		indexSeed += 486;
 		indexSeed *= indexSeed;
-		retCode = INDEX_REDUCE(pName, indexSeed, &newIndex, reqType);
+		retCode = INDEX_REDUCE(indexSeed, &newIndex);
 		if (retCode == RET_COLLISION_DETECTED)
-			retCode = INDEX_REBUILD(pName, indexSeed, &newIndex, ++iteration, reqType);
+			retCode = INDEX_REBUILD(indexSeed, &newIndex, ++iteration);
 
 		*pNewIndex = newIndex;
 		return retCode;
@@ -156,7 +130,22 @@ ret_code INDEX_REBUILD(char* pName, uint64 indexSeed, uint64* pNewIndex, uint8 i
 }
 
 
-ret_code INDEX_SEED(char* pName, uint64* pIndexSeed)
+static ret_code INDEX_PRIME(uint64 indexSeed, uint64* pIndex)
+{
+	uint64 index = indexSeed;
+	uint8 numDigits = __NumDigits(indexSeed);
+	uint32 numKeys = globalNumKeyRef;
+	while (index > numKeys)
+	{
+		index = (index % __Pow(10, numDigits - 1)) / 10;
+		numDigits -= 2;
+	}
+	*pIndex = index;
+	return RET_SUCCESS;
+}
+
+
+static ret_code INDEX_SEED(char* pName, uint64* pIndexSeed)
 {
 	char* c = pName;
 	uint8 strLen = 0;
@@ -180,49 +169,37 @@ ret_code INDEX_SEED(char* pName, uint64* pIndexSeed)
 }
 
 
-ret_code __Index__Get(char* pName, uint32* pIndex, action reqType)
+#define IND_REBUILD 1
+#define IND_LINEAR 2
+ret_code __Success(uint64 noIn, uint64* noOut, uint8 noIter) { return RET_SUCCESS; }
+ret_code __INDEX_LINEAR(uint64 noIn, uint64* indexOut, uint8 noIter)
 {
-	*pIndex = -1;
-	uint64 index = 0;
-	uint64 indexSeed = 0;
-	ret_code retCode = RET_SUCCESS;
-	retCode = INDEX_SEED(pName, &indexSeed);
-	retCode = INDEX_REDUCE(pName, indexSeed, &index, reqType);
+	ret_code retCode = RET_MAXITERLIM_FAILURE;
+	uint64 index = globalNumKeyRef;
+	while (retCode != RET_SUCCESS && index--)
+		retCode += (!((key*)activeKeyring->keys + index)->data) * (RET_SUCCESS - retCode);
 
-	if (retCode == RET_DUPLICATE_NAME_FND || retCode == RET_SUCCESS)
-	{
-		*pIndex = index;
-		return retCode;
-	}
-	
-	retCode = INDEX_REBUILD(pName, indexSeed, &index, 0, reqType);
-	if (retCode == RET_DUPLICATE_NAME_FND || retCode == RET_SUCCESS)
-	{
-		*pIndex = index;
-		return retCode;
-	}
-
-	unresolvedCollisions += (reqType == REQ_STORE);
-	index = NumKeys() - 1;
-	for (; index >= 0; index--)
-	{
-		if (reqType == REQ_STORE && !((key*)activeKeyring->keys + index)->data)
-		{
-			*pIndex = index;
-			return RET_SUCCESS;
-		}
-		retCode = __DuplicateCheck(pName, ((key*)activeKeyring->keys + index)->name);
-		if (retCode == RET_DUPLICATE_NAME_FND)
-		{
-			*pIndex = index;
-			return retCode;
-		}
-	}
-	return ((reqType == REQ_STORE) * RET_KEYSTORAGE_FAILURE) + ((reqType == REQ_GET) * RET_NAMEMSSING_FAILURE);
+	*indexOut = index;
+	return retCode;
 }
 
 
-void __Keyring__Clear()
+static ret_code(*indexFuncPtrs[3])(uint64, uint64*, uint8) =
+{ __Success, INDEX_REBUILD, __INDEX_LINEAR };
+static ret_code __Index__Get(char* pName, uint64 indexSeed, key** pKey)
+{
+	uint64 index = 0;
+
+	ret_code retCode = INDEX_REDUCE(indexSeed, &index);
+	retCode = indexFuncPtrs[(retCode != RET_SUCCESS) * IND_REBUILD](indexSeed, &index, 0);
+	retCode = indexFuncPtrs[(retCode != RET_SUCCESS) * IND_LINEAR](indexSeed, &index, 0);
+
+	*pKey = (key*)activeKeyring->keys + index;
+	return retCode += (retCode != RET_SUCCESS) * (RET_KEYSTORAGE_FAILURE - retCode);
+}
+
+
+static void __Keyring__Clear()
 {
 	if (activeKeyring)
 		for (uint8 i = 0; i < activeKeyring->numStashes; i++)
@@ -244,7 +221,7 @@ void __PrintKeys(uint32 line, const char* file)
 }
 
 
-ret_code __Keyring__Build(uint64 keyringSize)
+static ret_code __Keyring__Build(uint64 keyringSize)
 {
 	ret_code retCode = RET_SUCCESS;
 	if (!keyringSize)
@@ -267,7 +244,7 @@ ret_code __Keyring__Build(uint64 keyringSize)
 }
 
 
-ret_code __Keyring__AddStash(stash_handle stash)
+static ret_code __Keyring__AddStash(stash_handle stash)
 {
 	ret_code retCode = RET_SUCCESS;
 	stash_handle lastActive = *(stash_handle*)activeKeyring->pActiveStash;
@@ -299,6 +276,7 @@ ret_code __Stash__SysInit(uint64 totalAvailableMB, uint64* stashReserve)
 		*stashReserve = 1024 * 1024;
 	}
 	retCode = __Keyring__Build(keyringSize);
+	globalNumKeyRef = NumKeys() - 1;
 	return retCode;
 }
 
@@ -367,218 +345,211 @@ ret_code __Stash__Action(uint64 sizeMB, action reqAction)
 	return retCode;
 }
 
-/*
-ret_code __NameCheck(char* pName)
+
+ret_code __AllClear(char* pName)
 {
-	char* keyName;
-	uint32 numKeys = NumKeys();
-	uint32 usedKeys = activeKeyring->usedKeySlots;
-	for (uint32 i = 0; i < numKeys && usedKeys > 0; i++)
-	{
-		if (*((key*)activeKeyring->keys + i)->name)
-		{
-			if (__DuplicateCheck(pName, ((key*)activeKeyring->keys + i)->name) == RET_DUPLICATE_NAME_FND)
-				return RET_DUPLICATE_NAME_FND;
-			usedKeys--;
-		}
-	}
-	return RET_SUCCESS;
-}
-*/
+	ret_code retCode = RET_SUCCESS;
+	retCode += (!pName)
+		* (RET_NAMENOTFND_FAILURE - retCode);												//Check for name ptr
 
-ret_code __AllClear(char* name)
-{
-	if (!name)
-		return RET_NAMENOTFND_FAILURE;
-	
-	if (!activeKeyring)
-		return RET_KYRNGMSSNG_FAILURE;
+	retCode += (retCode == RET_SUCCESS)
+		* ((!activeKeyring) * RET_KYRNGMSSNG_FAILURE);										//Check for keyring ptr
 
-	if (!*(stash_handle*)activeKeyring->pActiveStash)
-		return RET_ASTASHMSNG_FAILURE;
+	retCode += (retCode == RET_SUCCESS)
+		* ((!*(stash_handle*)activeKeyring->pActiveStash) * RET_ASTASHMSNG_FAILURE);		//Check for stash ptr
 
-	if (__NameLen(name) >= MAX_NAME_LENGTH)
-		return RET_NMAXLENGTH_FAILURE;
-
-	return RET_SUCCESS;
-}
-
-
-ret_code __StoreKey(char* name, data_type type, uint32* indexRet)
-{
-	uint32 index = 0;
-	ret_code retCode = __Index__Get(name, &index, REQ_STORE);
-	if (retCode != RET_SUCCESS)
-		return retCode;
-
-	if (indexRet)
-		*indexRet = index;
-
-	key* toStore = (key*)activeKeyring->keys + index;
-	uint8 i;
-	for (i = 0; *(name + i) != '\0'; i++)
-		toStore->name[i] = *(name + i);
-	toStore->name[i + 1] = '\0';
-	toStore->type = type;
-	toStore->data = (*(stash_handle*)activeKeyring->pActiveStash)->next;
+	char* validName[] = { pName, "" };	//Array for case of null name ptr, indexed by conditional statement
+	retCode += (retCode == RET_SUCCESS)
+		* ((__NameLen(validName[(!pName)]) >= MAX_NAME_LENGTH) * RET_NMAXLENGTH_FAILURE);	//Check name length
 
 	return retCode;
 }
+
+
+static ret_code __DuplicateCheck(char* pName, uint64 indexPrime, key** pRetKey)
+{
+	ret_code retCode = RET_SUCCESS;
+
+	key* keySet = NULL;
+	key* keyLinkIterator = NULL;
+
+	keyLinkIterator = activeKeyring->keys + indexPrime;
+	while (keyLinkIterator)
+	{
+		keySet = keyLinkIterator;
+		retCode = __NameCheck(pName, keySet->name);
+		if (retCode == RET_DUPLICATE_NAME_FND)
+			break;
+		keyLinkIterator = keyLinkIterator->keyLink;
+	}
+	*pRetKey = keySet;
+	return retCode;
+}
+
+
+static ret_code __StoreKey(char* pName, data_type type)
+{
+	uint64 indexSeed = 0;
+	uint64 indexPrime = 0;
+	key* pKeySet = NULL;
+	key* pKeyActual = NULL;
+
+	ret_code retCode = INDEX_SEED(pName, &indexSeed);
+	retCode = INDEX_PRIME(indexSeed, &indexPrime);
+
+	retCode = __DuplicateCheck(pName, indexPrime, &pKeySet);
+	if (retCode == RET_DUPLICATE_NAME_FND)
+		return retCode;
+
+	retCode = __Index__Get(pName, indexSeed, &pKeyActual);
+	if (retCode != RET_SUCCESS)
+		return retCode;
+
+	key* toStore = pKeyActual;
+	key* linkChoice[] = { NULL, toStore };
+	pKeySet->keyLink = linkChoice[(pKeySet != toStore)];
+	uint8 i;
+	for (i = 0; *(pName + i) != '\0'; i++)
+		toStore->name[i] = *(pName + i);
+	toStore->name[i + 1] = '\0';
+	toStore->primeIndex = indexPrime;
+	toStore->type = type;
+	toStore->data = (*(stash_handle*)activeKeyring->pActiveStash)->next + POINTER_SIZE;
+
+	*(void**)(*(stash_handle*)activeKeyring->pActiveStash)->next = &toStore->data;
+	(*(stash_handle*)activeKeyring->pActiveStash)->next += POINTER_SIZE;
+
+	return retCode;
+}
+
+
+static ret_code __GetKey(char* pName, key** pRetKey)
+{
+	ret_code retCode = RET_SUCCESS;
+
+	uint64 indexSeed = 0;
+	uint64 indexPrime = 0;
+
+	retCode = INDEX_SEED(pName, &indexSeed);
+	retCode = INDEX_PRIME(indexSeed, &indexPrime);
+
+	__DuplicateCheck(pName, indexPrime, pRetKey);
+	return retCode;
+}
+
 
 ret_code __Store(char* name, data_type type, uint64 size, void* input)
 {
 	if (type != T_PPCHAR && type > T_PCHAR && type < T_UNKNOWN)
 		return RET_NONPTRONLY_FAILURE;
 	
-	ret_code retCode = __AllClear(name);
-	if (retCode == RET_SUCCESS)
-		retCode = __StoreKey(name, type, NULL);
+	ret_code retCode = __StoreKey(name, type);
+	activeKeyring->usedKeySlots += (retCode == RET_SUCCESS);
 
-	if (retCode == RET_SUCCESS)
-	{
-		activeKeyring->usedKeySlots++;
-		for (uint64 i = 0; i < size; i++)
-			*((char*)(*(stash_handle*)activeKeyring->pActiveStash)->next + i) = *((char*)input + i);
+	uint64 sW = (retCode == RET_SUCCESS) * size;
+	while(sW--)
+		*((char*)(*(stash_handle*)activeKeyring->pActiveStash)->next + sW) = *((char*)input + sW);
 
-		(*(stash_handle*)activeKeyring->pActiveStash)->next += size;
-	}
-	
+	(*(stash_handle*)activeKeyring->pActiveStash)->next += (retCode == RET_SUCCESS) * size;
 	return retCode;
 }
 
 
-ret_code __Reserve(char* name, data_type type, uint64 size)
+ret_code __Reserve(char* pName, data_type type, uint64 size, void* null)
 {
 	if (type < T_PCHAR)
 		return RET_RESPTRONLY_FAILURE;
 
-	ret_code retCode = __AllClear(name);
+	ret_code retCode = __StoreKey(pName, type);
 	if (retCode == RET_SUCCESS)
 	{
-		uint32 index;
-		retCode = __StoreKey(name, type, &index);
-		if (retCode == RET_SUCCESS)
-		{
-			*(uint32*)(*(stash_handle*)activeKeyring->pActiveStash)->next = T_RESERVED;
-			*(uint64*)((*(stash_handle*)activeKeyring->pActiveStash)->next + INT32_SIZE) = size;
-			((key*)activeKeyring->keys + index)->data = (*(stash_handle*)activeKeyring->pActiveStash)->next + INT32_SIZE + INT64_SIZE;
-			(*(stash_handle*)activeKeyring->pActiveStash)->next += INT32_SIZE + INT64_SIZE + size;
-		}
+		*(uint32*)(*(stash_handle*)activeKeyring->pActiveStash)->next = T_RESERVED;
+		*(uint64*)((*(stash_handle*)activeKeyring->pActiveStash)->next + INT32_SIZE) = size;
+		**(void***)((*(stash_handle*)activeKeyring->pActiveStash)->next - POINTER_SIZE) = 
+			(*(stash_handle*)activeKeyring->pActiveStash)->next + INT32_SIZE + INT64_SIZE;
+		(*(stash_handle*)activeKeyring->pActiveStash)->next += INT32_SIZE + INT64_SIZE + size;
 	}
 	return retCode;
 }
 
 
-ret_code __Fill(char* name, data_type type, void* input)
+ret_code __Fill(char* pName, data_type type, uint64 noSize, void* input)
 {
-	ret_code retCode = __AllClear(name);
-	if (retCode != RET_SUCCESS)
-		return retCode;
+	key* pKey;
+	__GetKey(pName, &pKey);
 
-	uint32 index = 0;
-	retCode = __Index__Get(name, &index, REQ_GET);
-	if (retCode != RET_DUPLICATE_NAME_FND)
-		return retCode;
-
-	if (*(uint32*)(((key*)activeKeyring->keys + index)->data - INT64_SIZE - INT32_SIZE) != T_RESERVED)
+	if (*(uint32*)(pKey->data - INT64_SIZE - INT32_SIZE) != T_RESERVED)
 		return RET_NORESERVED_FAILURE;
-	if (type != ((key*)activeKeyring->keys + index)->type)
+	if (type != pKey->type)
 		return RET_TYPEMATCHF_FAILURE;
 
-	uint64 availableSize = *(uint64*)(((key*)activeKeyring->keys + index)->data - INT64_SIZE);
+	uint64 availableSize = *(uint64*)(pKey->data - INT64_SIZE);
 	for(uint64 i = 0; i < availableSize; i++)
-		*(char*)(((key*)activeKeyring->keys + index)->data + i) = *(char*)(input + i);
+		*(char*)(pKey->data + i) = *(char*)(input + i);
 
-	retCode = RET_SUCCESS;
-	return retCode;
+	return RET_SUCCESS;
 }
 
 
 ret_code __Get(char* pName, data_type type, uint64 size, void* output)
 {
-	ret_code retCode = __AllClear(pName);
-	if (retCode != RET_SUCCESS)
-		return retCode;
+	key* pKey;
+	__GetKey(pName, &pKey);
 
-	uint32 index = 0;
-	retCode = __Index__Get(pName, &index, REQ_GET);
-	if (retCode != RET_DUPLICATE_NAME_FND)
-		return retCode;
-
-	if (type != ((key*)activeKeyring->keys + index)->type)
+	if (type != pKey->type)
 		return RET_TYPEMATCHG_FAILURE;
 
 	if(type <= T_LONGDOUBLE)
 		for (uint64 i = 0; i < size; i++)
-			*((char*)output + i) = *((char*)((key*)activeKeyring->keys + index)->data + i);
+			*((char*)output + i) = *((char*)pKey->data + i);
 
 	if (type > T_LONGDOUBLE && type < T_RESERVED)
 	{
 		if (type == T_PCHAR || type == T_PPCHAR)
-			*(char**)output = (char*)((key*)activeKeyring->keys + index)->data;
+			*(char**)output = (char*)pKey->data;
 		else
-			*(void**)output = (void*)((key*)activeKeyring->keys + index)->data;
+			*(void**)output = (void*)pKey->data;
 	}
-	retCode = RET_SUCCESS;
-	return retCode;
+	return RET_SUCCESS;
 }
 
 
-ret_code __Remove(char* pName)
+ret_code __Remove(char* pName, data_type noType, uint64 noSize, void* null)
 {
-	ret_code retCode = __AllClear(pName);
-	if (retCode != RET_SUCCESS)
-		return retCode;
-
-	uint32 index = 0;
-	retCode = __Index__Get(pName, &index, REQ_GET);
+	key* pKey = NULL;
+	ret_code retCode = __GetKey(pName, &pKey);
 	if (retCode != RET_DUPLICATE_NAME_FND)
 		return retCode;
 
-	//key activeKey = *(activeKeyring->keys + index);
-	void* dataAddr = (activeKeyring->keys + index)->data;
-	data_type dataType = (activeKeyring->keys + index)->type;
+	void* dataAddr = pKey->data;
+	data_type dataType = pKey->type;
 	uint64 dataSize =	(dataType < T_SHORT) * INT8_SIZE +
 						(dataType >= T_SHORT && dataType < T_INT) * INT16_SIZE +
 						(dataType >= T_INT && dataType < T_LONG)* INT32_SIZE +
 						(dataType >= T_LONG && dataType < T_LONGLONG) * LONG_SIZE +
 						(dataType >= T_LONGLONG && dataType < T_LONGDOUBLE) * INT64_SIZE +
 						(dataType == T_LONGDOUBLE) * LDOUB_SIZE +
-						(dataType > T_LONGDOUBLE) * (*(uint64*)(((key*)activeKeyring->keys + index)->data - INT64_SIZE));
+						(dataType > T_LONGDOUBLE) * (*(uint64*)(pKey->data - INT64_SIZE));
 
 	while (dataSize--)
 		*((uint8*)dataAddr + dataSize) = 0;
 
 	for (uint32 i = 0; i < KEY_SIZE; i++)
-		*((uint8*)(activeKeyring->keys + index) + i) = 0;
+		*((uint8*)pKey + i) = 0;
 
 	retCode = RET_SUCCESS;
 	return retCode;
 }
 
 
-ret_code __MemRequest(char* pName, data_type type, void* container, uint64 sizeItem, uint64 numItems, action reqAction)
+ret_code __FailFunc(char* pName, data_type noType, uint64 noSize, void* null) { return RET_ACTIONREQU_FAILURE; }	//Failure mode in case of undefined action request.
+static ret_code(*responsePtrArray[6])(char*, data_type, uint64, void*) =	//Storing pointers to functions once to reduce overhead.
+{ __FailFunc, __Store, __Reserve, __Fill, __Get, __Remove };				//Functions stored.
+ret_code __MemRequest(char* pName, data_type type, void* container, uint64 sizeItem, uint64 reserveSize, action reqAction)
 {
-	ret_code retCode;
-	switch (reqAction)
-	{
-	case REQ_STORE:
-		retCode = __Store(pName, type, sizeItem, container);
-		break;
-	case REQ_RESERVE:
-		retCode = __Reserve(pName, type, numItems);
-		break;
-	case REQ_FILL:
-		retCode = __Fill(pName, type, container);
-		break;
-	case REQ_GET:
-		retCode = __Get(pName, type, sizeItem, container);
-		break;
-	case REQ_REMOVE:
-		retCode = __Remove(pName);
-		break;
-	default:
-		retCode = RET_ACTIONREQU_FAILURE;
-	}
+	sizeItem += (reqAction == REQ_RESERVE) * (reserveSize - sizeItem);	//Branchless if(reqAction = REQ_RESERVE) sizeItem = reserveSize;
+	ret_code retCode = __AllClear(pName);
+	retCode = (responsePtrArray[(retCode == RET_SUCCESS) * reqAction])(pName, type, sizeItem, container);	//Call to response function with respect to action request type via function pointer array.
+	
 	return retCode;
 }
