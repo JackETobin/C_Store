@@ -192,7 +192,7 @@ ret_code __MemRequest(char* name, data_type type, void* container, uint64 sizeIt
 #define InitErrorCallback(pFunc)					__InitErrorCallback(pFunc, __LINE__, __FILE__)
 
 
-#define SetMemAllContained()						errcatch(__SetMemContained(), "MEM_SWITCH")
+//#define SetMemAllContained()						errcatch(__SetMemContained(), "MEM_SWITCH")
 
 
 #define MakeStash(sizeMB)						errcatch(__Stash__Action(sizeMB, REQ_MAKE), NULL)
